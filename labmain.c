@@ -105,7 +105,9 @@ void handle_interrupt(unsigned cause){
   int switch_status_now = get_sw();
   int sw_exit = switch_status_now & 0x1;
   int sw_confirm = switch_status_now & 0x2;
+  int sw_confirm_previous = sw_confirm_previous & 0x2;
   int sw_method = (switch_status_now>>2);
+  switch_status_previous = switch_status_now;
 
   if (timer[0] & 0x1){
     timer[0] = 0x1;
@@ -116,10 +118,13 @@ void handle_interrupt(unsigned cause){
     if (timeoutcount % 10 == 0){ tick(&mytime); counter++; }
   }
   if (cause==17){
+    if(sw_exit){
+      return;
+    }
     print("[Debug]sw trigger!\n");
       /* ---- SDRAM 触发通道 ---- */
 
-    if (n != 0 && sw_method!=0){
+    if (n != 0 && sw_confirm!=sw_confirm_previous){
       /* 简单健壮性：限制单次处理上限 */
       if (n > IMG_MAX) n = IMG_MAX;
 
