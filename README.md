@@ -25,7 +25,8 @@ This project provides a complete hardware-accelerated image processing workflow 
 - **Result Verification**: Download the processed image from the board's memory back to the host PC using the dtekv-download utility for analysis and verification.
 
 
-## Quick Start
+## How to use
+![](fig/usage.png)
 
 ## Running
 ### Demo
