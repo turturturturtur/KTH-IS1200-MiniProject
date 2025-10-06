@@ -31,6 +31,14 @@ extern void enable_interrupt();
 #define LEN_READ()        (*(volatile uint32_t*)LEN_ADDR)
 #define LEN_WRITE(val)    do { (*(volatile uint32_t*)LEN_ADDR) = (uint32_t)(val); } while (0)
 
+#define VGA_BASE   0x08000000u
+#define VGA_END    0x080257FFu
+#define VGA_PTR    ((volatile uint8_t*)VGA_BASE)
+#define VGA_SIZE   (VGA_END - VGA_BASE + 1)
+#define VGA_WIDTH  320
+#define VGA_HEIGHT 240
+
+
 /* ---- 本地缓冲 ---- */
 #define IMG_MAX   (64*1024)          /* 一次最多 64 KiB */
 static uint8_t img_buf[IMG_MAX];
@@ -87,6 +95,81 @@ static inline void debug_dump_bytes(const char* label, const volatile uint8_t* p
   jtag_send('\n');
 }
 
+// main.c 中需要添加的辅助函数
+// (把它放在 vga_output 函数的前面)
+static inline uint8_t convert_gray_to_rgb332(uint8_t gray_val) {
+    uint8_t r_3bit = (uint8_t)(((uint16_t)gray_val * 7) / 255);
+    uint8_t g_3bit = (uint8_t)(((uint16_t)gray_val * 7) / 255);
+    uint8_t b_2bit = (uint8_t)(((uint16_t)gray_val * 3) / 255);
+    return (r_3bit << 5) | (g_3bit << 2) | b_2bit;
+}
+
+
+// ============== 修改后的 vga_output 函数 ==============
+// 它现在负责将小图像绘制到大屏幕上
+void vga_output(const uint8_t *img_data, uint32_t img_len) {
+    
+    // --- 1. 假设输入图像是方形的，并计算其尺寸 ---
+    uint32_t img_side = 0;
+    // 简单的整数平方根计算，找到边长
+    for (uint32_t i = 0; i * i <= img_len; ++i) {
+        if (i * i == img_len) {
+            img_side = i;
+            break;
+        }
+    }
+    
+    if (img_side == 0) {
+        print("VGA Error: Input data length is not a perfect square.\n");
+        return; // 如果长度不是平方数，则无法确定尺寸，直接返回
+    }
+
+    uint32_t img_width = img_side;
+    uint32_t img_height = img_side;
+
+    print("Input image detected as ");
+    print_dec(img_width);
+    print("x");
+    print_dec(img_height);
+    print("\n");
+
+    // --- 2. 计算小图像在大屏幕上的起始位置（使其居中） ---
+    uint32_t start_x = (VGA_WIDTH - img_width) / 2;
+    uint32_t start_y = (VGA_HEIGHT - img_height) / 2;
+
+    // --- 3. 绘制整个 320x240 屏幕 ---
+    //    我们将直接写入VGA显存，而不是先写入一个本地大缓冲区
+    for (uint32_t y = 0; y < VGA_HEIGHT; ++y) {
+        for (uint32_t x = 0; x < VGA_WIDTH; ++x) {
+            
+            uint8_t pixel_to_write;
+
+            // 判断当前屏幕坐标(x, y)是否在小图像的绘制区域内
+            if (x >= start_x && x < (start_x + img_width) &&
+                y >= start_y && y < (start_y + img_height))
+            {
+                // 是：计算它对应于输入图像中的哪个像素
+                uint32_t img_x = x - start_x;
+                uint32_t img_y = y - start_y;
+                
+                // 从输入数据中获取原始的灰度值
+                uint8_t gray_value = img_data[img_y * img_width + img_x];
+
+                // 将灰度值转换为VGA兼容的RRRGGGBB格式
+                pixel_to_write = convert_gray_to_rgb332(gray_value);
+
+            } else {
+                // 否：填充背景色（黑色）
+                pixel_to_write = convert_gray_to_rgb332(0);
+            }
+            
+            // 将最终计算出的像素颜色写入VGA显存的正确位置
+            VGA_PTR[y * VGA_WIDTH + x] = pixel_to_write;
+        }
+    }
+    
+    print("VGA output done: Full 320x240 frame drawn.\n");
+}
 
 /* ---- 7 段数码管显示（保留你的实现） ---- */
 void set_display(int display_number, int value){
@@ -183,6 +266,8 @@ void handle_interrupt(unsigned cause){
       // }
 
       /* 空转给外设时间；避免过度忙等可按需加小延迟 */
+      /* 4) VGA 输出 */
+      vga_output(img_buf, n);
       __asm__ volatile("nop");
     }
       *sw_ec = 0xFFFFFFFF;
@@ -215,6 +300,7 @@ void labinit(void){
   switch_status_previous = (*sw_data) & 0x2;
   enable_interrupt();
 }
+
 
 /* ---- 主程序 ---- */
 int main(void){
